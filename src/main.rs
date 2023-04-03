@@ -12,7 +12,7 @@ use config_file::get_config_file;
 #[derive(Parser, Debug)]
 #[command(name = "jconf")]
 #[command(author = "PoOnesNerfect <jack.y.l.dev@gmail.com>")]
-#[command(version = "0.1")]
+#[command(version = "0.1.1")]
 #[command(about = "Keep all your config files synchronized in one place", long_about = None)]
 struct Args {
     #[arg(value_enum, value_name = "COMMAND", default_value_t = Command::Sync)]
@@ -63,52 +63,90 @@ fn run() -> Result<()> {
     let config_file = get_config_file(&file)?;
     let configs = config_file.reduce_to_configs(specific_configs)?;
 
+    let mut files_changed = false;
+
     // if configs are specified by arguments, then filter by given configs
     for (config_name, config) in configs {
         let origin_base = config.base_path;
-        let linked_base = output_path.join(config_name);
+        let linked_base = output_path.join(&config_name);
 
         let include_glob = config.include_glob;
         let exclude_glob = config.exclude_glob;
 
         match cmd {
-            Command::Pull => sync(
-                &origin_base,
-                &linked_base,
-                &include_glob,
-                &exclude_glob,
-                force,
-            )?,
-            Command::Push => sync(
-                &linked_base,
-                &origin_base,
-                &include_glob,
-                &exclude_glob,
-                force,
-            )?,
-            Command::Sync => {
-                sync(
+            Command::Pull => {
+                let count = sync(
                     &origin_base,
                     &linked_base,
                     &include_glob,
                     &exclude_glob,
-                    false,
+                    force,
                 )?;
-                sync(
-                    &linked_base,
-                    &origin_base,
-                    &include_glob,
-                    &exclude_glob,
-                    false,
-                )?;
+
+                if count > 0 {
+                    files_changed = true;
+                    println!("{config_name}: {count} file(s) pulled");
+                }
             }
-        };
+            Command::Push => {
+                let count = sync(
+                    &linked_base,
+                    &origin_base,
+                    &include_glob,
+                    &exclude_glob,
+                    force,
+                )?;
+                if count > 0 {
+                    files_changed = true;
+                    println!("{config_name}: {count} file(s) pushed");
+                }
+            }
+            Command::Sync => {
+                let pulled = sync(
+                    &origin_base,
+                    &linked_base,
+                    &include_glob,
+                    &exclude_glob,
+                    false,
+                )?;
+                let pushed = sync(
+                    &linked_base,
+                    &origin_base,
+                    &include_glob,
+                    &exclude_glob,
+                    false,
+                )?;
+
+                match (pulled, pushed) {
+                    (0, 0) => {}
+                    (0, pushed) => {
+                        files_changed = true;
+                        println!("{config_name}: {pushed} file(s) pushed");
+                    }
+                    (pulled, 0) => {
+                        files_changed = true;
+                        println!("{config_name}: {pulled} file(s) pulled");
+                    }
+                    (pulled, pushed) => {
+                        files_changed = true;
+                        println!(
+                            "{config_name}: {pulled} file(s) pulled, and {pushed} file(s) pushed"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    if !files_changed {
+        println!("No change. All files are up-to-date.")
     }
 
     Ok(())
 }
 
 /// Pull files from origin paths to linked paths.
+/// Returns number of files affected.
 ///
 /// This function simply copies over files from origin paths to linked paths.
 fn sync(
@@ -117,7 +155,7 @@ fn sync(
     include_glob: &str,
     exclude_glob: &Option<String>,
     force: bool,
-) -> Result<()> {
+) -> Result<usize> {
     let include_glob = format!(
         "{}/{}",
         from_base.to_string_lossy().trim_end_matches('/'),
@@ -134,6 +172,8 @@ fn sync(
         None
     };
 
+    let mut count = 0;
+
     for entry in glob(&include_glob).expect("failed to read glob pattern") {
         let full_file_path = entry?;
 
@@ -146,10 +186,13 @@ fn sync(
 
         let file_path = trim_base_path(&full_file_path, from_base);
 
-        sync_file(from_base, to_base, &file_path, force)?;
+        let updated = sync_file(from_base, to_base, &file_path, force)?;
+        if updated {
+            count += 1;
+        }
     }
 
-    Ok(())
+    Ok(count)
 }
 
 fn trim_base_path(full_path: &Path, base_path: &Path) -> PathBuf {
@@ -161,13 +204,15 @@ fn trim_base_path(full_path: &Path, base_path: &Path) -> PathBuf {
     full_path.iter().skip(base_len).collect()
 }
 
-fn sync_file(from_base: &Path, to_base: &Path, file_path: &Path, force: bool) -> Result<()> {
+/// Tries to sync files from from_path to to_path, and returns if file was updated
+fn sync_file(from_base: &Path, to_base: &Path, file_path: &Path, force: bool) -> Result<bool> {
     let from_path = from_base.join(file_path);
     let to_path = to_base.join(file_path);
 
-    if from_path.is_dir() {
+    if from_path.is_dir() || from_path.is_symlink() {
         // we don't process dir since we recursively create all necessary dir when files are synced
-        return Ok(());
+        // And I don't want to deal with symlink atm.
+        return Ok(false);
     }
 
     // if to_path already exists, we can skip creating new file and parent directories.
@@ -184,19 +229,16 @@ fn sync_file(from_base: &Path, to_base: &Path, file_path: &Path, force: bool) ->
     };
 
     if should_sync {
-        // I don't wanna deal with links for now
-        if from_path.is_file() {
-            // if destination does not exist, create all parent dirs
-            if !to_path_exists {
-                // recursively create necessary dir
-                let mut parent = to_path.to_owned();
-                parent.pop();
-                fs::create_dir_all(parent)?;
-            }
-
-            fs::copy(&from_path, &to_path)?;
+        // if destination does not exist, create all parent dirs
+        if !to_path_exists {
+            // recursively create necessary dir
+            let mut parent = to_path.to_owned();
+            parent.pop();
+            fs::create_dir_all(parent)?;
         }
+
+        fs::copy(&from_path, &to_path)?;
     }
 
-    Ok(())
+    Ok(should_sync)
 }

@@ -1,7 +1,7 @@
 [package]
 edition = "2021"
 name = "jconf"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["PoOnesNerfect <jack.y.l.dev@gmail.com>"]
 description = "CLI that helps keep all your config files synchronized in one place"
 documentation = "https://docs.rs/jconf/"

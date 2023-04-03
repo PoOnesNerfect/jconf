@@ -74,9 +74,9 @@ impl<'de> Visitor<'de> for ConfigVisitor {
             .into();
         let mut include_glob = None;
 
-        // if given base_path is a file, then extract the file from base_path,
-        // and give it to glob
-        if !base_path.is_dir() {
+        // if given base_path is not a dir (and path doesn't exist but has extension),
+        // then extract the file from base_path and give it to glob
+        if !base_path.is_dir() && !base_path.exists() && base_path.extension().is_some() {
             let file_name = base_path
                 .file_name()
                 .ok_or_else(|| de::Error::custom("Path should not be empty"))?
