@@ -10,7 +10,7 @@ use std::{collections::HashMap, env, fs, path::PathBuf};
 
 /// Parse and return data from jconf.toml
 pub fn get_config_file(jconf_path: &str) -> Result<ConfigFile> {
-    let config_str = fs::read_to_string(&jconf_path)
+    let config_str = fs::read_to_string(jconf_path)
         .with_context(|| format!("Config file {} does not exist", jconf_path))?;
 
     let jconf = toml::from_str(&config_str)?;
@@ -65,11 +65,11 @@ impl<'de> Visitor<'de> for ConfigVisitor {
         formatter.write_str("a string or a table `{ path, include?, exclude? }`")
     }
 
-    fn visit_string<E>(self, v: String) -> std::result::Result<Self::Value, E>
+    fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E>
     where
-        E: serde::de::Error,
+        E: de::Error,
     {
-        let mut base_path: PathBuf = escape_var(&v)
+        let mut base_path: PathBuf = escape_var(v)
             .map_err(|e| de::Error::custom(format!("{}", e)))?
             .into();
         let mut include_glob = None;
@@ -79,9 +79,9 @@ impl<'de> Visitor<'de> for ConfigVisitor {
         if !base_path.is_dir() {
             let file_name = base_path
                 .file_name()
-                .ok_or(de::Error::custom("Path should not be empty"))?
+                .ok_or_else(|| de::Error::custom("Path should not be empty"))?
                 .to_str()
-                .ok_or(de::Error::custom("Path should be valid Unicode string"))?
+                .ok_or_else(|| de::Error::custom("Path should be valid Unicode string"))?
                 .to_owned();
             include_glob.replace(file_name);
 
@@ -93,6 +93,13 @@ impl<'de> Visitor<'de> for ConfigVisitor {
             include_glob: include_glob.unwrap_or_else(|| "**/*".to_owned()),
             exclude_glob: None,
         })
+    }
+
+    fn visit_string<E>(self, v: String) -> std::result::Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        self.visit_str(&v)
     }
 
     fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
@@ -127,9 +134,9 @@ impl<'de> Visitor<'de> for ConfigVisitor {
         if !base_path.is_dir() {
             let file_name = base_path
                 .file_name()
-                .ok_or(de::Error::custom("Path should not be empty"))?
+                .ok_or_else(|| de::Error::custom("Path should not be empty"))?
                 .to_str()
-                .ok_or(de::Error::custom("Path should be valid Unicode string"))?
+                .ok_or_else(|| de::Error::custom("Path should be valid Unicode string"))?
                 .to_owned();
             include_glob.replace(file_name);
 

@@ -112,8 +112,8 @@ fn run() -> Result<()> {
 ///
 /// This function simply copies over files from origin paths to linked paths.
 fn sync(
-    from_base: &PathBuf,
-    to_base: &PathBuf,
+    from_base: &Path,
+    to_base: &Path,
     include_glob: &str,
     exclude_glob: &Option<String>,
     force: bool,
@@ -146,7 +146,7 @@ fn sync(
 
         let file_path = trim_base_path(&full_file_path, from_base);
 
-        sync_file(&from_base, &to_base, &file_path, force)?;
+        sync_file(from_base, to_base, &file_path, force)?;
     }
 
     Ok(())
@@ -161,7 +161,7 @@ fn trim_base_path(full_path: &Path, base_path: &Path) -> PathBuf {
     full_path.iter().skip(base_len).collect()
 }
 
-fn sync_file(from_base: &PathBuf, to_base: &PathBuf, file_path: &Path, force: bool) -> Result<()> {
+fn sync_file(from_base: &Path, to_base: &Path, file_path: &Path, force: bool) -> Result<()> {
     let from_path = from_base.join(file_path);
     let to_path = to_base.join(file_path);
 
