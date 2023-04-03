@@ -12,7 +12,7 @@ use config_file::get_config_file;
 #[derive(Parser, Debug)]
 #[command(name = "jconf")]
 #[command(author = "PoOnesNerfect <jack.y.l.dev@gmail.com>")]
-#[command(version = "0.1.1")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "Keep all your config files synchronized in one place", long_about = None)]
 struct Args {
     #[arg(value_enum, value_name = "COMMAND", default_value_t = Command::Sync)]
@@ -209,9 +209,8 @@ fn sync_file(from_base: &Path, to_base: &Path, file_path: &Path, force: bool) ->
     let from_path = from_base.join(file_path);
     let to_path = to_base.join(file_path);
 
-    if from_path.is_dir() || from_path.is_symlink() {
+    if from_path.is_dir() {
         // we don't process dir since we recursively create all necessary dir when files are synced
-        // And I don't want to deal with symlink atm.
         return Ok(false);
     }
 

@@ -69,27 +69,10 @@ impl<'de> Visitor<'de> for ConfigVisitor {
     where
         E: de::Error,
     {
-        let mut base_path: PathBuf = escape_var(v)
-            .map_err(|e| de::Error::custom(format!("{}", e)))?
-            .into();
         let mut include_glob = None;
 
-        // if given base_path is not a dir (and path doesn't exist but has extension),
-        // then extract the file from base_path and give it to glob
-        if !base_path.is_dir() && !base_path.exists() && base_path.extension().is_some() {
-            let file_name = base_path
-                .file_name()
-                .ok_or_else(|| de::Error::custom("Path should not be empty"))?
-                .to_str()
-                .ok_or_else(|| de::Error::custom("Path should be valid Unicode string"))?
-                .to_owned();
-            include_glob.replace(file_name);
-
-            base_path.pop();
-        }
-
         Ok(ConfigPath {
-            base_path,
+            base_path: validated_path(v, &mut include_glob)?,
             include_glob: include_glob.unwrap_or_else(|| "**/*".to_owned()),
             exclude_glob: None,
         })
@@ -110,54 +93,68 @@ impl<'de> Visitor<'de> for ConfigVisitor {
         let mut include_glob = None;
         let mut exclude_glob = None;
 
-        while let Some((key, val)) = map.next_entry::<String, String>()? {
-            match key.as_str() {
+        while let Some((k, v)) = map.next_entry::<String, String>()? {
+            match k.as_str() {
                 "path" => {
-                    let escaped =
-                        escape_var(&val).map_err(|e| de::Error::custom(format!("{}", e)))?;
-
-                    base_path.replace(escaped)
+                    let path = validated_path(&v, &mut include_glob)?;
+                    base_path.replace(path);
                 }
-                "include" => include_glob.replace(val),
-                "exclude" => exclude_glob.replace(val),
-                _ => None,
+                "include" => {
+                    // if value is already set from `path` field, don't overwrite it
+                    if include_glob.is_none() {
+                        include_glob.replace(v);
+                    }
+                }
+                "exclude" => {
+                    exclude_glob.replace(v);
+                }
+                _ => {}
             };
         }
 
-        let Some(base_path) = base_path else {
-            return Err(serde::de::Error::missing_field("path"));
-        };
-        let mut base_path = PathBuf::from(base_path);
-
-        // if given base_path is a file, then extract the file from base_path,
-        // and give it to glob
-        if !base_path.is_dir() {
-            let file_name = base_path
-                .file_name()
-                .ok_or_else(|| de::Error::custom("Path should not be empty"))?
-                .to_str()
-                .ok_or_else(|| de::Error::custom("Path should be valid Unicode string"))?
-                .to_owned();
-            include_glob.replace(file_name);
-
-            base_path.pop();
-        }
-
         Ok(ConfigPath {
-            base_path,
+            base_path: base_path.ok_or_else(|| serde::de::Error::missing_field("path"))?,
             include_glob: include_glob.unwrap_or_else(|| "**/*".to_owned()),
             exclude_glob,
         })
     }
 }
 
-impl<'de> Deserialize<'de> for ConfigPath {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_any(ConfigVisitor)
+// check if given path is a dir with trailing slash.
+// If path is a file, remove filename from path and set it as glob.
+fn validated_path<E: de::Error>(
+    val: &str,
+    include_glob: &mut Option<String>,
+) -> Result<PathBuf, E> {
+    let ends_with_slash = val.ends_with('/');
+
+    let mut path: PathBuf = escape_var(val)
+        .map_err(|e| de::Error::custom(format!("{}", e)))?
+        .into();
+
+    // if it's a dir but doesn't end with slash,
+    // it's invalid
+    if !ends_with_slash && path.is_dir() {
+        return Err(de::Error::custom(format!(
+            "Invalid path: '{val}'. Dir paths must end with a '/'. Ex) `~/.config/helix/`"
+        )));
     }
+
+    // if given base_path is a file, then extract the file from base_path,
+    // and give it to glob
+    if !ends_with_slash {
+        let file_name = path
+            .file_name()
+            .ok_or_else(|| de::Error::custom("Path should not be empty"))?
+            .to_str()
+            .ok_or_else(|| de::Error::custom("Path should be valid Unicode string"))?
+            .to_owned();
+        include_glob.replace(file_name);
+
+        path.pop();
+    }
+
+    Ok(path)
 }
 
 // replaces '~' or env var with its value
@@ -193,4 +190,13 @@ fn escape_var(path: &str) -> Result<String> {
     };
 
     Ok(path)
+}
+
+impl<'de> Deserialize<'de> for ConfigPath {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(ConfigVisitor)
+    }
 }
