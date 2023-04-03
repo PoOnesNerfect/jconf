@@ -1,1 +1,1 @@
-# sconfig
+# jconf
